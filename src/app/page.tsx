@@ -98,6 +98,8 @@ export default function UpgradedPage() {
 
   // DB setup status
   const [dbStatus, setDbStatus] = useState<'unknown' | 'ready' | 'needs_setup'>('unknown');
+  const [setupSql, setSetupSql] = useState('');
+  const [setupSqlUrl, setSetupSqlUrl] = useState('');
 
   const hasAnimated = useRef(false);
 
@@ -109,6 +111,12 @@ export default function UpgradedPage() {
       setDbStatus(data.ready ? 'ready' : 'needs_setup');
       if (data.ready) {
         loadSavedEntries();
+      } else {
+        // Get the SQL to display
+        const setupRes = await fetch('/api/setup', { method: 'POST' });
+        const setupData = await setupRes.json();
+        if (setupData.sql) setSetupSql(setupData.sql);
+        if (setupData.sqlUrl) setSetupSqlUrl(setupData.sqlUrl);
       }
     } catch {
       setDbStatus('unknown');
@@ -489,20 +497,40 @@ export default function UpgradedPage() {
 
           {/* DB Setup Banner */}
           {dbStatus === 'needs_setup' && (
-            <div className="mb-8 p-4 bg-amber-400/10 border border-amber-400/30 rounded-xl flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-amber-400 mb-1">Database tables need to be created</p>
-                <p className="text-xs text-white/50 mb-3">
-                  One-time setup required. Click below to auto-create tables on your Supabase database.
-                </p>
-                <button
-                  onClick={handleSetupDb}
-                  className="px-4 py-2 bg-amber-400 text-black text-xs font-medium rounded-lg hover:bg-amber-300 transition"
-                >
-                  SETUP DATABASE
-                </button>
+            <div className="mb-8 p-5 bg-amber-400/10 border border-amber-400/30 rounded-xl">
+              <div className="flex items-start gap-3 mb-4">
+                <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-amber-400 mb-1">Database tables need to be created</p>
+                  <p className="text-xs text-white/50 mb-3">
+                    One-time setup: copy the SQL below, paste it in your Supabase SQL Editor, and click Run.
+                  </p>
+                  {setupSqlUrl && (
+                    <a
+                      href={setupSqlUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-amber-400 text-black text-xs font-medium rounded-lg hover:bg-amber-300 transition"
+                    >
+                      OPEN SQL EDITOR
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </div>
               </div>
+              {setupSql && (
+                <div className="relative">
+                  <pre className="text-[11px] text-white/60 font-mono bg-black/60 p-4 rounded-lg max-h-48 overflow-y-auto leading-relaxed">
+                    {setupSql}
+                  </pre>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(setupSql)}
+                    className="absolute top-2 right-2 px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-[10px] text-white/60 transition"
+                  >
+                    COPY
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

@@ -1,12 +1,11 @@
-import postgres from 'postgres';
+import { createClient } from '@supabase/supabase-js';
 
-// Supabase PostgreSQL connection for server-side API routes
-// This will work from Vercel's network (not sandboxed)
-const sql = postgres(process.env.SUPABASE_DATABASE_URL!, {
-  max: 3,
-  idle_timeout: 20,
-  connect_timeout: 10,
-  ssl: 'require',
-});
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-export default sql;
+// Public client (respects RLS)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Admin client (bypasses RLS)
+export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
