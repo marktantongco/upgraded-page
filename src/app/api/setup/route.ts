@@ -45,14 +45,20 @@ export async function POST() {
       .select('id')
       .limit(1);
 
-    const entriesReady = !entriesError || !entriesError.message.includes('does not exist');
+    const entriesReady = !entriesError || (
+      !entriesError.message.includes('does not exist') &&
+      !entriesError.message.includes('schema cache')
+    );
 
     const { error: contactError } = await supabaseAdmin
       .from('contact_submissions')
       .select('id')
       .limit(1);
 
-    const contactReady = !contactError || !contactError.message.includes('does not exist');
+    const contactReady = !contactError || (
+      !contactError.message.includes('does not exist') &&
+      !contactError.message.includes('schema cache')
+    );
 
     if (entriesReady && contactReady) {
       return NextResponse.json({
