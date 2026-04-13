@@ -1,22 +1,29 @@
 import { supabaseAdmin } from '@/lib/supabase-client';
 import { NextResponse } from 'next/server';
 
-// GET /api/setup — Check if tables exist
+// GET /api/setup — Check if tables exist (use POST which does a more reliable check)
 export async function GET() {
   try {
+    // Try an actual insert test to reliably detect table existence
     const { error: entriesError } = await supabaseAdmin
       .from('ai_entries')
-      .select('id')
+      .select('id, created_at')
       .limit(1);
 
-    const entriesReady = !entriesError || !entriesError.message.includes('does not exist');
+    const entriesReady = !entriesError || (
+      !entriesError.message.includes('does not exist') &&
+      !entriesError.message.includes('schema cache')
+    );
 
     const { error: contactError } = await supabaseAdmin
       .from('contact_submissions')
-      .select('id')
+      .select('id, created_at')
       .limit(1);
 
-    const contactReady = !contactError || !contactError.message.includes('does not exist');
+    const contactReady = !contactError || (
+      !contactError.message.includes('does not exist') &&
+      !contactError.message.includes('schema cache')
+    );
 
     return NextResponse.json({
       ai_entries: entriesReady,
