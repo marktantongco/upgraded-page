@@ -1,24 +1,8 @@
-import { supabase } from '@/lib/supabase-client';
+import sql from '@/lib/supabase-client';
 import { NextResponse } from 'next/server';
 
-// POST /api/setup — Creates the required tables (run once)
-export async function POST() {
-  try {
-    // Check if tables exist by trying to query them
-    const { error: entriesError } = await supabase
-      .from('ai_entries')
-      .select('id')
-      .limit(1);
-
-    if (entriesError && entriesError.code === '42P01') {
-      // Table doesn't exist — return SQL for manual creation
-      return NextResponse.json({
-        status: 'needs_setup',
-        message: 'Tables need to be created. Please run the SQL in your Supabase SQL Editor.',
-        sql: `
--- Run this in your Supabase SQL Editor
--- https://supabase.com/dashboard/project/hocjetqkgrptxdbsmmgx/sql
-
+const CREATE_TABLES_SQL = `
+-- Create ai_entries table
 CREATE TABLE IF NOT EXISTS ai_entries (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   prompt TEXT NOT NULL,
@@ -26,6 +10,7 @@ CREATE TABLE IF NOT EXISTS ai_entries (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Create contact_submissions table
 CREATE TABLE IF NOT EXISTS contact_submissions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL,
@@ -34,83 +19,98 @@ CREATE TABLE IF NOT EXISTS contact_submissions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Enable Row Level Security
 ALTER TABLE ai_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contact_submissions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow public read" ON ai_entries FOR SELECT USING (true);
-CREATE POLICY "Allow public insert" ON ai_entries FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow public read" ON contact_submissions FOR SELECT USING (true);
-CREATE POLICY "Allow public insert" ON contact_submissions FOR INSERT WITH CHECK (true);
+-- Drop existing policies if they exist (idempotent)
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Allow public read entries" ON ai_entries;
+  DROP POLICY IF EXISTS "Allow public insert entries" ON ai_entries;
+  DROP POLICY IF EXISTS "Allow public read contacts" ON contact_submissions;
+  DROP POLICY IF EXISTS "Allow public insert contacts" ON contact_submissions;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+-- Create policies
+CREATE POLICY "Allow public read entries" ON ai_entries FOR SELECT USING (true);
+CREATE POLICY "Allow public insert entries" ON ai_entries FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public read contacts" ON contact_submissions FOR SELECT USING (true);
+CREATE POLICY "Allow public insert contacts" ON contact_submissions FOR INSERT WITH CHECK (true);
+
+-- Create indexes
 CREATE INDEX IF NOT EXISTS idx_ai_entries_created_at ON ai_entries (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contact_submissions_created_at ON contact_submissions (created_at DESC);
-        `.trim(),
-      });
+`;
+
+// POST /api/setup — Creates the required tables (run once from Vercel)
+export async function POST() {
+  try {
+    if (!process.env.SUPABASE_DATABASE_URL) {
+      return NextResponse.json(
+        { error: 'SUPABASE_DATABASE_URL not configured' },
+        { status: 500 }
+      );
     }
 
-    const { error: contactError } = await supabase
-      .from('contact_submissions')
-      .select('id')
-      .limit(1);
-
-    if (contactError && contactError.code === '42P01') {
-      return NextResponse.json({
-        status: 'partial_setup',
-        message: 'ai_entries exists but contact_submissions is missing.',
-        sql: `
-CREATE TABLE IF NOT EXISTS contact_submissions (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  message TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-ALTER TABLE contact_submissions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public read" ON contact_submissions FOR SELECT USING (true);
-CREATE POLICY "Allow public insert" ON contact_submissions FOR INSERT WITH CHECK (true);
-CREATE INDEX IF NOT EXISTS idx_contact_submissions_created_at ON contact_submissions (created_at DESC);
-        `.trim(),
-      });
-    }
+    await sql.unsafe(CREATE_TABLES_SQL);
 
     return NextResponse.json({
-      status: 'ready',
-      message: 'All tables are set up and ready to use.',
+      status: 'success',
+      message: 'Tables created successfully: ai_entries, contact_submissions',
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ status: 'error', message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 // GET /api/setup — Check current setup status
 export async function GET() {
   try {
-    const { error: entriesError } = await supabase
-      .from('ai_entries')
-      .select('id')
-      .limit(1);
+    if (!process.env.SUPABASE_DATABASE_URL) {
+      return NextResponse.json({
+        ready: false,
+        error: 'SUPABASE_DATABASE_URL not configured',
+      });
+    }
 
-    const entriesReady = !entriesError || entriesError.code !== '42P01';
+    const entries = await sql`SELECT to_regclass('public.ai_entries') as exists`;
+    const contacts = await sql`SELECT to_regclass('public.contact_submissions') as exists`;
 
-    const { error: contactError } = await supabase
-      .from('contact_submissions')
-      .select('id')
-      .limit(1);
+    const entriesReady = entries[0]?.exists !== null;
+    const contactsReady = contacts[0]?.exists !== null;
 
-    const contactReady = !contactError || contactError.code !== '42P01';
+    if (!entriesReady || !contactsReady) {
+      return NextResponse.json({
+        ai_entries: entriesReady,
+        contact_submissions: contactsReady,
+        ready: false,
+        message: !entriesReady && !contactsReady
+          ? 'No tables found. POST to /api/setup to create them.'
+          : 'Partial setup. POST to /api/setup to create missing tables.',
+      });
+    }
+
+    // Get counts
+    const entryCount = await sql`SELECT count(*)::int as count FROM ai_entries`;
+    const contactCount = await sql`SELECT count(*)::int as count FROM contact_submissions`;
 
     return NextResponse.json({
-      ai_entries: entriesReady,
-      contact_submissions: contactReady,
-      ready: entriesReady && contactReady,
+      ai_entries: true,
+      contact_submissions: true,
+      ready: true,
+      message: 'All tables are set up and ready.',
+      counts: {
+        ai_entries: entryCount[0]?.count || 0,
+        contact_submissions: contactCount[0]?.count || 0,
+      },
     });
-  } catch {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({
-      ai_entries: false,
-      contact_submissions: false,
       ready: false,
-      error: 'Cannot connect to Supabase. Check environment variables.',
+      error: message,
     });
   }
 }
